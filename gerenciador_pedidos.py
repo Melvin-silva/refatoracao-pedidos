@@ -1,4 +1,4 @@
-# PASSO 5 - Extract Function: desconto e frete deixam de ser duplicados (DRY/SRP).
+# PASSO 6 - Replace Conditional with Polymorphism: politica por tipo de cliente (OCP/LSP).
 from dataclasses import dataclass
 
 LIMITE_DESCONTO_PROMOCIONAL = 500
@@ -25,7 +25,6 @@ JUROS_POR_PARCELA = 0.0199
 UFS_NORDESTE = {"PB", "AL", "RN", "BA", "SE", "CE", "PI", "MA"}
 # QUIRK LEGADO: o orcamento original nao incluia MA. Mantido ate o passo 12.
 UFS_NORDESTE_ORCAMENTO = UFS_NORDESTE - {"MA"}
-TIPOS_CLIENTE = ("COMUM", "VIP", "FUNCIONARIO")
 
 
 @dataclass
@@ -108,22 +107,61 @@ class Estoque:
         return [(p, q) for p, q in self._quantidades.items() if q < ESTOQUE_MINIMO]
 
 
-def calcular_desconto(tipo_cliente, subtotal):
-    if tipo_cliente == "COMUM":
+class PoliticaCliente:
+    frete_gratis = False
+    mensagem_promocional = ""
+    mensagem_confirmacao = ""
+
+    def desconto(self, subtotal):
+        return 0
+
+
+class PoliticaComum(PoliticaCliente):
+    mensagem_promocional = "Compre acima de R$ 500 e ganhe 5% de desconto!"
+
+    def desconto(self, subtotal):
         if subtotal > LIMITE_DESCONTO_PROMOCIONAL:
             return subtotal * DESCONTO_COMUM
         return 0
-    if tipo_cliente == "VIP":
+
+
+class PoliticaVip(PoliticaCliente):
+    frete_gratis = True
+    mensagem_promocional = "Ofertas exclusivas: 15% em compras acima de R$ 500!"
+    mensagem_confirmacao = "Obrigado por ser VIP! Frete gratis garantido. "
+
+    def desconto(self, subtotal):
         if subtotal > LIMITE_DESCONTO_PROMOCIONAL:
             return subtotal * DESCONTO_VIP_ACIMA_DO_LIMITE
         return subtotal * DESCONTO_VIP
-    if tipo_cliente == "FUNCIONARIO":
+
+
+class PoliticaFuncionario(PoliticaCliente):
+    mensagem_promocional = "Lembrete: seu desconto de 20% vale em toda a loja."
+    mensagem_confirmacao = "Desconto de colaborador aplicado. "
+
+    def desconto(self, subtotal):
         return subtotal * DESCONTO_FUNCIONARIO
-    return 0
 
 
-def calcular_frete(uf, valor_com_desconto, tipo_cliente, ufs_nordeste=UFS_NORDESTE):
-    if valor_com_desconto > LIMITE_FRETE_GRATIS or tipo_cliente == "VIP":
+class PoliticaDesconhecida(PoliticaCliente):
+    """Null Object: tipo nao cadastrado (sem desconto e sem mensagens)."""
+
+
+POLITICAS = {
+    "COMUM": PoliticaComum(),
+    "VIP": PoliticaVip(),
+    "FUNCIONARIO": PoliticaFuncionario(),
+}
+POLITICA_DESCONHECIDA = PoliticaDesconhecida()
+
+
+def politica_para(tipo_cliente):
+    return POLITICAS.get(tipo_cliente, POLITICA_DESCONHECIDA)
+
+
+def calcular_frete(uf, valor_com_desconto, politica, ufs_nordeste=UFS_NORDESTE):
+    if valor_com_desconto > LIMITE_FRETE_GRATIS or politica.frete_gratis:
         return 0
     if uf == "PE":
         return FRETE_PE
@@ -143,11 +181,11 @@ class GerenciadorPedidos:
     def adicionar_item(self, produto, qtd, preco):
         self.itens.append(ItemPedido(produto, int(str(qtd)), float(str(preco))))
 
-    def _subtotal_e_desconto(self, tipo_cliente):
+    def _subtotal_e_desconto(self, politica):
         subtotal = 0
         for item in self.itens:
             subtotal += item.subtotal
-        return subtotal, calcular_desconto(tipo_cliente, subtotal)
+        return subtotal, politica.desconto(subtotal)
 
     def processar_pedido(self, nome, email, tipo_cliente, pagamento, parcelas,
                          rua, numero, cidade, uf, cep):
@@ -165,11 +203,12 @@ class GerenciadorPedidos:
         erro = self.estoque.validar(self.itens)
         if erro:
             return erro
-        if cliente.tipo not in TIPOS_CLIENTE:
+        if cliente.tipo not in POLITICAS:
             return "ERRO: tipo de cliente desconhecido"
+        politica = POLITICAS[cliente.tipo]
 
-        subtotal, desconto = self._subtotal_e_desconto(cliente.tipo)
-        frete = calcular_frete(endereco.uf, subtotal - desconto, cliente.tipo)
+        subtotal, desconto = self._subtotal_e_desconto(politica)
+        frete = calcular_frete(endereco.uf, subtotal - desconto, politica)
 
         total = subtotal - desconto + frete
         if pagamento == "PIX":
@@ -198,10 +237,7 @@ class GerenciadorPedidos:
             print("Falha ao salvar pedido: " + str(e))
 
         mensagem = "Ola " + cliente.nome + ", seu pedido foi confirmado. "
-        if cliente.tipo == "VIP":
-            mensagem += "Obrigado por ser VIP! Frete gratis garantido. "
-        elif cliente.tipo == "FUNCIONARIO":
-            mensagem += "Desconto de colaborador aplicado. "
+        mensagem += politica.mensagem_confirmacao
         mensagem += "Total: R$ " + "%.2f" % total + ". Entrega em: " + texto_endereco
         print("[EMAIL para " + cliente.email + "] " + mensagem)
 
@@ -211,8 +247,9 @@ class GerenciadorPedidos:
         return "OK: " + "%.2f" % total
 
     def calcular_orcamento(self, tipo_cliente, uf):
-        subtotal, desconto = self._subtotal_e_desconto(tipo_cliente)
-        frete = calcular_frete(uf, subtotal - desconto, tipo_cliente,
+        politica = politica_para(tipo_cliente)
+        subtotal, desconto = self._subtotal_e_desconto(politica)
+        frete = calcular_frete(uf, subtotal - desconto, politica,
                                UFS_NORDESTE_ORCAMENTO)
         return round((subtotal - desconto + frete) * 100.0) / 100.0
 
@@ -247,11 +284,4 @@ class GerenciadorPedidos:
         return alerta
 
     def mensagem_promocional(self, tipo_cliente):
-        if tipo_cliente == "VIP":
-            return "Ofertas exclusivas: 15% em compras acima de R$ 500!"
-        elif tipo_cliente == "COMUM":
-            return "Compre acima de R$ 500 e ganhe 5% de desconto!"
-        elif tipo_cliente == "FUNCIONARIO":
-            return "Lembrete: seu desconto de 20% vale em toda a loja."
-        else:
-            return ""
+        return politica_para(tipo_cliente).mensagem_promocional
