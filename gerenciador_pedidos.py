@@ -1,4 +1,4 @@
-# PASSO 6 - Replace Conditional with Polymorphism: politica por tipo de cliente (OCP/LSP).
+# PASSO 7 - Replace Conditional with Polymorphism: formas de pagamento (OCP/SRP).
 from dataclasses import dataclass
 
 LIMITE_DESCONTO_PROMOCIONAL = 500
@@ -170,6 +170,48 @@ def calcular_frete(uf, valor_com_desconto, politica, ufs_nordeste=UFS_NORDESTE):
     return FRETE_DEMAIS_ESTADOS
 
 
+class Pix:
+    def validar(self):
+        return None
+
+    def aplicar(self, total):
+        return total * (1 - DESCONTO_PIX)
+
+
+class Boleto:
+    def validar(self):
+        return None
+
+    def aplicar(self, total):
+        return total + TAXA_BOLETO
+
+
+class Cartao:
+    def __init__(self, parcelas):
+        self.parcelas = parcelas
+
+    def validar(self):
+        if self.parcelas < 1 or self.parcelas > MAX_PARCELAS:
+            return "ERRO: parcelas invalidas"
+        return None
+
+    def aplicar(self, total):
+        if self.parcelas > PARCELAS_SEM_JUROS:
+            return total * (1 + JUROS_POR_PARCELA * self.parcelas)
+        return total
+
+
+def criar_pagamento(forma, parcelas):
+    """Retorna o objeto de pagamento ou None se a forma for desconhecida."""
+    if forma == "PIX":
+        return Pix()
+    if forma == "BOLETO":
+        return Boleto()
+    if forma == "CARTAO":
+        return Cartao(parcelas)
+    return None
+
+
 class GerenciadorPedidos:
 
     def __init__(self):
@@ -210,18 +252,13 @@ class GerenciadorPedidos:
         subtotal, desconto = self._subtotal_e_desconto(politica)
         frete = calcular_frete(endereco.uf, subtotal - desconto, politica)
 
-        total = subtotal - desconto + frete
-        if pagamento == "PIX":
-            total = total * (1 - DESCONTO_PIX)
-        elif pagamento == "BOLETO":
-            total = total + TAXA_BOLETO
-        elif pagamento == "CARTAO":
-            if parcelas < 1 or parcelas > MAX_PARCELAS:
-                return "ERRO: parcelas invalidas"
-            if parcelas > PARCELAS_SEM_JUROS:
-                total = total * (1 + JUROS_POR_PARCELA * parcelas)
-        else:
+        forma = criar_pagamento(pagamento, parcelas)
+        if forma is None:
             return "ERRO: forma de pagamento invalida"
+        erro = forma.validar()
+        if erro:
+            return erro
+        total = forma.aplicar(subtotal - desconto + frete)
         total = round(total * 100.0) / 100.0
 
         self.estoque.baixar(self.itens)
