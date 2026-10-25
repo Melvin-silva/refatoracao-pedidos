@@ -1,4 +1,4 @@
-# PASSO 3 - Replace Primitive with Object: ItemPedido e RegistroVenda (SRP).
+# PASSO 4 - Extract Class: Estoque (SRP).
 from dataclasses import dataclass
 
 LIMITE_DESCONTO_PROMOCIONAL = 500
@@ -74,17 +74,42 @@ class RegistroVenda:
     total: float
 
 
+class Estoque:
+    def __init__(self):
+        self._quantidades = {
+            "CANETA": 100,
+            "CADERNO": 50,
+            "MOCHILA": 10,
+            "CALCULADORA": 5,
+        }
+
+    def __getitem__(self, produto):
+        return self._quantidades[produto]
+
+    def validar(self, itens):
+        """Retorna mensagem de erro ou None."""
+        for item in itens:
+            if item.produto not in self._quantidades:
+                return "ERRO: produto inexistente " + item.produto
+            if self._quantidades[item.produto] < item.quantidade:
+                return "ERRO: estoque insuficiente " + item.produto
+        return None
+
+    def baixar(self, itens):
+        for item in itens:
+            self._quantidades[item.produto] -= item.quantidade
+
+    def abaixo_do_minimo(self):
+        return [(p, q) for p, q in self._quantidades.items() if q < ESTOQUE_MINIMO]
+
+
 class GerenciadorPedidos:
 
     def __init__(self):
         self.itens = []
-        self.estoque = {}
+        self.estoque = Estoque()
         self.historico = []
         self.total_vendido = 0
-        self.estoque["CANETA"] = 100
-        self.estoque["CADERNO"] = 50
-        self.estoque["MOCHILA"] = 10
-        self.estoque["CALCULADORA"] = 5
 
     def adicionar_item(self, produto, qtd, preco):
         self.itens.append(ItemPedido(produto, int(str(qtd)), float(str(preco))))
@@ -102,11 +127,9 @@ class GerenciadorPedidos:
         erro = endereco.validar()
         if erro:
             return erro
-        for item in self.itens:
-            if item.produto not in self.estoque:
-                return "ERRO: produto inexistente " + item.produto
-            if self.estoque[item.produto] < item.quantidade:
-                return "ERRO: estoque insuficiente " + item.produto
+        erro = self.estoque.validar(self.itens)
+        if erro:
+            return erro
 
         subtotal = 0
         for item in self.itens:
@@ -152,8 +175,7 @@ class GerenciadorPedidos:
             return "ERRO: forma de pagamento invalida"
         total = round(total * 100.0) / 100.0
 
-        for item in self.itens:
-            self.estoque[item.produto] = self.estoque[item.produto] - item.quantidade
+        self.estoque.baixar(self.itens)
 
         texto_endereco = endereco.formatado()
 
@@ -229,11 +251,10 @@ class GerenciadorPedidos:
 
     def verificar_estoque(self):
         alerta = ""
-        for produto in self.estoque:
-            if self.estoque[produto] < ESTOQUE_MINIMO:
-                alerta += ("ALERTA: " + produto + " com estoque baixo ("
-                           + str(self.estoque[produto]) + ")\n")
-                print("[EMAIL para " + EMAIL_COMPRAS + "] Repor " + produto)
+        for produto, quantidade in self.estoque.abaixo_do_minimo():
+            alerta += ("ALERTA: " + produto + " com estoque baixo ("
+                       + str(quantidade) + ")\n")
+            print("[EMAIL para " + EMAIL_COMPRAS + "] Repor " + produto)
         return alerta
 
     def mensagem_promocional(self, tipo_cliente):
