@@ -1,4 +1,4 @@
-# PASSO 9 - Extract Method: processar_pedido dividido em metodos pequenos (SRP).
+# PASSO 10 - Extract Class + injecao de dependencia: repositorio e notificador (DIP/SRP).
 from dataclasses import dataclass
 
 LIMITE_DESCONTO_PROMOCIONAL = 500
@@ -201,13 +201,34 @@ def criar_pagamento(forma, parcelas):
     raise ErroPedido("forma de pagamento invalida")
 
 
+class RepositorioPedidosCsv:
+    def __init__(self, caminho="pedidos.csv"):
+        self.caminho = caminho
+
+    def salvar(self, cliente, forma_pagamento, total, texto_endereco):
+        linha = (cliente.nome + ";" + cliente.email + ";" + cliente.tipo + ";"
+                 + forma_pagamento + ";" + str(total) + ";" + texto_endereco + "\n")
+        try:
+            with open(self.caminho, "a", encoding="utf-8") as arquivo:
+                arquivo.write(linha)
+        except OSError as e:
+            print("Falha ao salvar pedido: " + str(e))
+
+
+class NotificadorConsole:
+    def enviar_email(self, destinatario, mensagem):
+        print("[EMAIL para " + destinatario + "] " + mensagem)
+
+
 class GerenciadorPedidos:
 
-    def __init__(self):
+    def __init__(self, estoque=None, repositorio=None, notificador=None):
         self.itens = []
-        self.estoque = Estoque()
+        self.estoque = estoque if estoque is not None else Estoque()
         self.historico = []
         self.total_vendido = 0
+        self._repositorio = repositorio if repositorio is not None else RepositorioPedidosCsv()
+        self._notificador = notificador if notificador is not None else NotificadorConsole()
 
     def adicionar_item(self, produto, qtd, preco):
         self.itens.append(ItemPedido(produto, int(str(qtd)), float(str(preco))))
@@ -242,7 +263,7 @@ class GerenciadorPedidos:
 
         self.estoque.baixar(self.itens)
         texto_endereco = endereco.formatado()
-        self._gravar_pedido(cliente, forma_pagamento, total, texto_endereco)
+        self._repositorio.salvar(cliente, forma_pagamento, total, texto_endereco)
         self._notificar_cliente(cliente, politica, total, texto_endereco)
 
         self.historico.append(RegistroVenda(cliente.nome, cliente.tipo, total))
@@ -257,20 +278,11 @@ class GerenciadorPedidos:
         total = pagamento.aplicar(subtotal - desconto + frete)
         return round(total * 100.0) / 100.0
 
-    def _gravar_pedido(self, cliente, forma_pagamento, total, texto_endereco):
-        try:
-            f = open("pedidos.csv", "a", encoding="utf-8")
-            f.write(cliente.nome + ";" + cliente.email + ";" + cliente.tipo + ";"
-                    + forma_pagamento + ";" + str(total) + ";" + texto_endereco + "\n")
-            f.close()
-        except OSError as e:
-            print("Falha ao salvar pedido: " + str(e))
-
     def _notificar_cliente(self, cliente, politica, total, texto_endereco):
         mensagem = "Ola " + cliente.nome + ", seu pedido foi confirmado. "
         mensagem += politica.mensagem_confirmacao
         mensagem += "Total: R$ " + "%.2f" % total + ". Entrega em: " + texto_endereco
-        print("[EMAIL para " + cliente.email + "] " + mensagem)
+        self._notificador.enviar_email(cliente.email, mensagem)
 
     def calcular_orcamento(self, tipo_cliente, uf):
         politica = politica_para(tipo_cliente)
@@ -306,7 +318,7 @@ class GerenciadorPedidos:
         for produto, quantidade in self.estoque.abaixo_do_minimo():
             alerta += ("ALERTA: " + produto + " com estoque baixo ("
                        + str(quantidade) + ")\n")
-            print("[EMAIL para " + EMAIL_COMPRAS + "] Repor " + produto)
+            self._notificador.enviar_email(EMAIL_COMPRAS, "Repor " + produto)
         return alerta
 
     def mensagem_promocional(self, tipo_cliente):
