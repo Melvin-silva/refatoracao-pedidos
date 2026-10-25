@@ -210,7 +210,7 @@ def test_orcamento_uf_MA(g):
     # processar_pedido cobrava 22.9. Apos unificar a regra de frete, ambos
     # usam 22.9 (total 72.9). Antes do passo 12 o valor esperado era 89.9.
     g.adicionar_item("CANETA", 10, 5.0)
-    assert g.calcular_orcamento("COMUM", "MA") == 89.9
+    assert g.calcular_orcamento("COMUM", "MA") == 72.9
 
 
 # ----------------------------------------------------------- relatorio/estoque

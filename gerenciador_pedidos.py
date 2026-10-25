@@ -1,4 +1,4 @@
-# PASSO 11 - Separate Query from Modifier: consulta pura de estoque baixo (SRP/ISP).
+# PASSO 12 - CORRECAO DELIBERADA (muda comportamento): orcamento passa a tratar MA como nordeste.
 from dataclasses import dataclass
 
 LIMITE_DESCONTO_PROMOCIONAL = 500
@@ -23,8 +23,6 @@ PARCELAS_SEM_JUROS = 3
 JUROS_POR_PARCELA = 0.0199
 
 UFS_NORDESTE = {"PB", "AL", "RN", "BA", "SE", "CE", "PI", "MA"}
-# QUIRK LEGADO: o orcamento original nao incluia MA. Mantido ate o passo 12.
-UFS_NORDESTE_ORCAMENTO = UFS_NORDESTE - {"MA"}
 
 
 class ErroPedido(Exception):
@@ -159,12 +157,12 @@ def politica_para(tipo_cliente):
     return POLITICAS.get(tipo_cliente, POLITICA_DESCONHECIDA)
 
 
-def calcular_frete(uf, valor_com_desconto, politica, ufs_nordeste=UFS_NORDESTE):
+def calcular_frete(uf, valor_com_desconto, politica):
     if valor_com_desconto > LIMITE_FRETE_GRATIS or politica.frete_gratis:
         return 0
     if uf == "PE":
         return FRETE_PE
-    if uf in ufs_nordeste:
+    if uf in UFS_NORDESTE:
         return FRETE_NORDESTE
     return FRETE_DEMAIS_ESTADOS
 
@@ -287,8 +285,7 @@ class GerenciadorPedidos:
     def calcular_orcamento(self, tipo_cliente, uf):
         politica = politica_para(tipo_cliente)
         subtotal, desconto = self._subtotal_e_desconto(politica)
-        frete = calcular_frete(uf, subtotal - desconto, politica,
-                               UFS_NORDESTE_ORCAMENTO)
+        frete = calcular_frete(uf, subtotal - desconto, politica)
         return round((subtotal - desconto + frete) * 100.0) / 100.0
 
     def gerar_relatorio(self):
