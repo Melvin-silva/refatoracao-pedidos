@@ -1,4 +1,4 @@
-# PASSO 4 - Extract Class: Estoque (SRP).
+# PASSO 5 - Extract Function: desconto e frete deixam de ser duplicados (DRY/SRP).
 from dataclasses import dataclass
 
 LIMITE_DESCONTO_PROMOCIONAL = 500
@@ -21,6 +21,11 @@ TAXA_BOLETO = 2.5
 MAX_PARCELAS = 12
 PARCELAS_SEM_JUROS = 3
 JUROS_POR_PARCELA = 0.0199
+
+UFS_NORDESTE = {"PB", "AL", "RN", "BA", "SE", "CE", "PI", "MA"}
+# QUIRK LEGADO: o orcamento original nao incluia MA. Mantido ate o passo 12.
+UFS_NORDESTE_ORCAMENTO = UFS_NORDESTE - {"MA"}
+TIPOS_CLIENTE = ("COMUM", "VIP", "FUNCIONARIO")
 
 
 @dataclass
@@ -103,6 +108,30 @@ class Estoque:
         return [(p, q) for p, q in self._quantidades.items() if q < ESTOQUE_MINIMO]
 
 
+def calcular_desconto(tipo_cliente, subtotal):
+    if tipo_cliente == "COMUM":
+        if subtotal > LIMITE_DESCONTO_PROMOCIONAL:
+            return subtotal * DESCONTO_COMUM
+        return 0
+    if tipo_cliente == "VIP":
+        if subtotal > LIMITE_DESCONTO_PROMOCIONAL:
+            return subtotal * DESCONTO_VIP_ACIMA_DO_LIMITE
+        return subtotal * DESCONTO_VIP
+    if tipo_cliente == "FUNCIONARIO":
+        return subtotal * DESCONTO_FUNCIONARIO
+    return 0
+
+
+def calcular_frete(uf, valor_com_desconto, tipo_cliente, ufs_nordeste=UFS_NORDESTE):
+    if valor_com_desconto > LIMITE_FRETE_GRATIS or tipo_cliente == "VIP":
+        return 0
+    if uf == "PE":
+        return FRETE_PE
+    if uf in ufs_nordeste:
+        return FRETE_NORDESTE
+    return FRETE_DEMAIS_ESTADOS
+
+
 class GerenciadorPedidos:
 
     def __init__(self):
@@ -113,6 +142,12 @@ class GerenciadorPedidos:
 
     def adicionar_item(self, produto, qtd, preco):
         self.itens.append(ItemPedido(produto, int(str(qtd)), float(str(preco))))
+
+    def _subtotal_e_desconto(self, tipo_cliente):
+        subtotal = 0
+        for item in self.itens:
+            subtotal += item.subtotal
+        return subtotal, calcular_desconto(tipo_cliente, subtotal)
 
     def processar_pedido(self, nome, email, tipo_cliente, pagamento, parcelas,
                          rua, numero, cidade, uf, cep):
@@ -130,36 +165,11 @@ class GerenciadorPedidos:
         erro = self.estoque.validar(self.itens)
         if erro:
             return erro
-
-        subtotal = 0
-        for item in self.itens:
-            subtotal += item.subtotal
-
-        desconto = 0
-        if cliente.tipo == "COMUM":
-            if subtotal > LIMITE_DESCONTO_PROMOCIONAL:
-                desconto = subtotal * DESCONTO_COMUM
-        elif cliente.tipo == "VIP":
-            if subtotal > LIMITE_DESCONTO_PROMOCIONAL:
-                desconto = subtotal * DESCONTO_VIP_ACIMA_DO_LIMITE
-            else:
-                desconto = subtotal * DESCONTO_VIP
-        elif cliente.tipo == "FUNCIONARIO":
-            desconto = subtotal * DESCONTO_FUNCIONARIO
-        else:
+        if cliente.tipo not in TIPOS_CLIENTE:
             return "ERRO: tipo de cliente desconhecido"
 
-        frete = 0
-        if endereco.uf == "PE":
-            frete = FRETE_PE
-        elif (endereco.uf == "PB" or endereco.uf == "AL" or endereco.uf == "RN"
-              or endereco.uf == "BA" or endereco.uf == "SE" or endereco.uf == "CE"
-              or endereco.uf == "PI" or endereco.uf == "MA"):
-            frete = FRETE_NORDESTE
-        else:
-            frete = FRETE_DEMAIS_ESTADOS
-        if subtotal - desconto > LIMITE_FRETE_GRATIS or cliente.tipo == "VIP":
-            frete = 0
+        subtotal, desconto = self._subtotal_e_desconto(cliente.tipo)
+        frete = calcular_frete(endereco.uf, subtotal - desconto, cliente.tipo)
 
         total = subtotal - desconto + frete
         if pagamento == "PIX":
@@ -201,30 +211,9 @@ class GerenciadorPedidos:
         return "OK: " + "%.2f" % total
 
     def calcular_orcamento(self, tipo_cliente, uf):
-        subtotal = 0
-        for item in self.itens:
-            subtotal += item.subtotal
-        desconto = 0
-        if tipo_cliente == "COMUM":
-            if subtotal > LIMITE_DESCONTO_PROMOCIONAL:
-                desconto = subtotal * DESCONTO_COMUM
-        elif tipo_cliente == "VIP":
-            if subtotal > LIMITE_DESCONTO_PROMOCIONAL:
-                desconto = subtotal * DESCONTO_VIP_ACIMA_DO_LIMITE
-            else:
-                desconto = subtotal * DESCONTO_VIP
-        elif tipo_cliente == "FUNCIONARIO":
-            desconto = subtotal * DESCONTO_FUNCIONARIO
-        frete = 0
-        if uf == "PE":
-            frete = FRETE_PE
-        elif (uf == "PB" or uf == "AL" or uf == "RN" or uf == "BA"
-              or uf == "SE" or uf == "CE" or uf == "PI"):
-            frete = FRETE_NORDESTE
-        else:
-            frete = FRETE_DEMAIS_ESTADOS
-        if subtotal - desconto > LIMITE_FRETE_GRATIS or tipo_cliente == "VIP":
-            frete = 0
+        subtotal, desconto = self._subtotal_e_desconto(tipo_cliente)
+        frete = calcular_frete(uf, subtotal - desconto, tipo_cliente,
+                               UFS_NORDESTE_ORCAMENTO)
         return round((subtotal - desconto + frete) * 100.0) / 100.0
 
     def gerar_relatorio(self):
