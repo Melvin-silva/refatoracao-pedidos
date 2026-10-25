@@ -1,4 +1,4 @@
-# PASSO 2 - Introduce Parameter Object: Cliente e Endereco (SRP).
+# PASSO 3 - Replace Primitive with Object: ItemPedido e RegistroVenda (SRP).
 from dataclasses import dataclass
 
 LIMITE_DESCONTO_PROMOCIONAL = 500
@@ -56,6 +56,24 @@ class Endereco:
                 + self.uf + ", CEP " + self.cep)
 
 
+@dataclass
+class ItemPedido:
+    produto: str
+    quantidade: int
+    preco: float
+
+    @property
+    def subtotal(self):
+        return self.quantidade * self.preco
+
+
+@dataclass
+class RegistroVenda:
+    nome: str
+    tipo_cliente: str
+    total: float
+
+
 class GerenciadorPedidos:
 
     def __init__(self):
@@ -69,7 +87,7 @@ class GerenciadorPedidos:
         self.estoque["CALCULADORA"] = 5
 
     def adicionar_item(self, produto, qtd, preco):
-        self.itens.append([produto, str(qtd), str(preco)])
+        self.itens.append(ItemPedido(produto, int(str(qtd)), float(str(preco))))
 
     def processar_pedido(self, nome, email, tipo_cliente, pagamento, parcelas,
                          rua, numero, cidade, uf, cep):
@@ -85,14 +103,14 @@ class GerenciadorPedidos:
         if erro:
             return erro
         for item in self.itens:
-            if item[0] not in self.estoque:
-                return "ERRO: produto inexistente " + item[0]
-            if self.estoque[item[0]] < int(item[1]):
-                return "ERRO: estoque insuficiente " + item[0]
+            if item.produto not in self.estoque:
+                return "ERRO: produto inexistente " + item.produto
+            if self.estoque[item.produto] < item.quantidade:
+                return "ERRO: estoque insuficiente " + item.produto
 
         subtotal = 0
         for item in self.itens:
-            subtotal += int(item[1]) * float(item[2])
+            subtotal += item.subtotal
 
         desconto = 0
         if cliente.tipo == "COMUM":
@@ -135,7 +153,7 @@ class GerenciadorPedidos:
         total = round(total * 100.0) / 100.0
 
         for item in self.itens:
-            self.estoque[item[0]] = self.estoque[item[0]] - int(item[1])
+            self.estoque[item.produto] = self.estoque[item.produto] - item.quantidade
 
         texto_endereco = endereco.formatado()
 
@@ -155,7 +173,7 @@ class GerenciadorPedidos:
         mensagem += "Total: R$ " + "%.2f" % total + ". Entrega em: " + texto_endereco
         print("[EMAIL para " + cliente.email + "] " + mensagem)
 
-        self.historico.append(cliente.nome + "|" + cliente.tipo + "|" + str(total))
+        self.historico.append(RegistroVenda(cliente.nome, cliente.tipo, total))
         self.total_vendido += total
         self.itens.clear()
         return "OK: " + "%.2f" % total
@@ -163,7 +181,7 @@ class GerenciadorPedidos:
     def calcular_orcamento(self, tipo_cliente, uf):
         subtotal = 0
         for item in self.itens:
-            subtotal += int(item[1]) * float(item[2])
+            subtotal += item.subtotal
         desconto = 0
         if tipo_cliente == "COMUM":
             if subtotal > LIMITE_DESCONTO_PROMOCIONAL:
@@ -192,15 +210,15 @@ class GerenciadorPedidos:
         vip = 0
         comum = 0
         func = 0
-        for h in self.historico:
-            partes = h.split("|")
-            if partes[1] == "VIP":
+        for venda in self.historico:
+            if venda.tipo_cliente == "VIP":
                 vip += 1
-            elif partes[1] == "COMUM":
+            elif venda.tipo_cliente == "COMUM":
                 comum += 1
-            elif partes[1] == "FUNCIONARIO":
+            elif venda.tipo_cliente == "FUNCIONARIO":
                 func += 1
-            r += partes[0] + " (" + partes[1] + "): R$ " + "%.2f" % float(partes[2]) + "\n"
+            r += (venda.nome + " (" + venda.tipo_cliente + "): R$ "
+                  + "%.2f" % venda.total + "\n")
         r += "Pedidos VIP: " + str(vip) + "\n"
         r += "Pedidos COMUM: " + str(comum) + "\n"
         r += "Pedidos FUNCIONARIO: " + str(func) + "\n"
