@@ -1,4 +1,4 @@
-# PASSO 7 - Replace Conditional with Polymorphism: formas de pagamento (OCP/SRP).
+# PASSO 8 - Replace Error Code with Exception: ErroPedido (SRP).
 from dataclasses import dataclass
 
 LIMITE_DESCONTO_PROMOCIONAL = 500
@@ -27,6 +27,10 @@ UFS_NORDESTE = {"PB", "AL", "RN", "BA", "SE", "CE", "PI", "MA"}
 UFS_NORDESTE_ORCAMENTO = UFS_NORDESTE - {"MA"}
 
 
+class ErroPedido(Exception):
+    """Violacao de regra de negocio ao processar um pedido."""
+
+
 @dataclass
 class Cliente:
     nome: str
@@ -34,12 +38,10 @@ class Cliente:
     tipo: str
 
     def validar(self):
-        """Retorna mensagem de erro ou None."""
         if self.nome is None or self.nome.strip() == "":
-            return "ERRO: cliente sem nome"
+            raise ErroPedido("cliente sem nome")
         if self.email is None or "@" not in self.email or "." not in self.email:
-            return "ERRO: email invalido"
-        return None
+            raise ErroPedido("email invalido")
 
 
 @dataclass
@@ -52,8 +54,7 @@ class Endereco:
 
     def validar(self):
         if self.cep is None or len(self.cep.replace("-", "")) != 8:
-            return "ERRO: cep invalido"
-        return None
+            raise ErroPedido("cep invalido")
 
     def formatado(self):
         return (self.rua + ", " + self.numero + ", " + self.cidade + "/"
@@ -91,13 +92,11 @@ class Estoque:
         return self._quantidades[produto]
 
     def validar(self, itens):
-        """Retorna mensagem de erro ou None."""
         for item in itens:
             if item.produto not in self._quantidades:
-                return "ERRO: produto inexistente " + item.produto
+                raise ErroPedido("produto inexistente " + item.produto)
             if self._quantidades[item.produto] < item.quantidade:
-                return "ERRO: estoque insuficiente " + item.produto
-        return None
+                raise ErroPedido("estoque insuficiente " + item.produto)
 
     def baixar(self, itens):
         for item in itens:
@@ -171,29 +170,20 @@ def calcular_frete(uf, valor_com_desconto, politica, ufs_nordeste=UFS_NORDESTE):
 
 
 class Pix:
-    def validar(self):
-        return None
-
     def aplicar(self, total):
         return total * (1 - DESCONTO_PIX)
 
 
 class Boleto:
-    def validar(self):
-        return None
-
     def aplicar(self, total):
         return total + TAXA_BOLETO
 
 
 class Cartao:
     def __init__(self, parcelas):
+        if parcelas < 1 or parcelas > MAX_PARCELAS:
+            raise ErroPedido("parcelas invalidas")
         self.parcelas = parcelas
-
-    def validar(self):
-        if self.parcelas < 1 or self.parcelas > MAX_PARCELAS:
-            return "ERRO: parcelas invalidas"
-        return None
 
     def aplicar(self, total):
         if self.parcelas > PARCELAS_SEM_JUROS:
@@ -202,14 +192,13 @@ class Cartao:
 
 
 def criar_pagamento(forma, parcelas):
-    """Retorna o objeto de pagamento ou None se a forma for desconhecida."""
     if forma == "PIX":
         return Pix()
     if forma == "BOLETO":
         return Boleto()
     if forma == "CARTAO":
         return Cartao(parcelas)
-    return None
+    raise ErroPedido("forma de pagamento invalida")
 
 
 class GerenciadorPedidos:
@@ -234,54 +223,46 @@ class GerenciadorPedidos:
         cliente = Cliente(nome, email, tipo_cliente)
         endereco = Endereco(rua, numero, cidade, uf, cep)
 
-        erro = cliente.validar()
-        if erro:
-            return erro
-        if len(self.itens) == 0:
-            return "ERRO: pedido vazio"
-        erro = endereco.validar()
-        if erro:
-            return erro
-        erro = self.estoque.validar(self.itens)
-        if erro:
-            return erro
-        if cliente.tipo not in POLITICAS:
-            return "ERRO: tipo de cliente desconhecido"
-        politica = POLITICAS[cliente.tipo]
-
-        subtotal, desconto = self._subtotal_e_desconto(politica)
-        frete = calcular_frete(endereco.uf, subtotal - desconto, politica)
-
-        forma = criar_pagamento(pagamento, parcelas)
-        if forma is None:
-            return "ERRO: forma de pagamento invalida"
-        erro = forma.validar()
-        if erro:
-            return erro
-        total = forma.aplicar(subtotal - desconto + frete)
-        total = round(total * 100.0) / 100.0
-
-        self.estoque.baixar(self.itens)
-
-        texto_endereco = endereco.formatado()
-
         try:
-            f = open("pedidos.csv", "a", encoding="utf-8")
-            f.write(cliente.nome + ";" + cliente.email + ";" + cliente.tipo + ";"
-                    + pagamento + ";" + str(total) + ";" + texto_endereco + "\n")
-            f.close()
-        except OSError as e:
-            print("Falha ao salvar pedido: " + str(e))
+            cliente.validar()
+            if len(self.itens) == 0:
+                raise ErroPedido("pedido vazio")
+            endereco.validar()
+            self.estoque.validar(self.itens)
+            if cliente.tipo not in POLITICAS:
+                raise ErroPedido("tipo de cliente desconhecido")
+            politica = POLITICAS[cliente.tipo]
 
-        mensagem = "Ola " + cliente.nome + ", seu pedido foi confirmado. "
-        mensagem += politica.mensagem_confirmacao
-        mensagem += "Total: R$ " + "%.2f" % total + ". Entrega em: " + texto_endereco
-        print("[EMAIL para " + cliente.email + "] " + mensagem)
+            subtotal, desconto = self._subtotal_e_desconto(politica)
+            frete = calcular_frete(endereco.uf, subtotal - desconto, politica)
 
-        self.historico.append(RegistroVenda(cliente.nome, cliente.tipo, total))
-        self.total_vendido += total
-        self.itens.clear()
-        return "OK: " + "%.2f" % total
+            forma = criar_pagamento(pagamento, parcelas)
+            total = forma.aplicar(subtotal - desconto + frete)
+            total = round(total * 100.0) / 100.0
+
+            self.estoque.baixar(self.itens)
+
+            texto_endereco = endereco.formatado()
+
+            try:
+                f = open("pedidos.csv", "a", encoding="utf-8")
+                f.write(cliente.nome + ";" + cliente.email + ";" + cliente.tipo + ";"
+                        + pagamento + ";" + str(total) + ";" + texto_endereco + "\n")
+                f.close()
+            except OSError as e:
+                print("Falha ao salvar pedido: " + str(e))
+
+            mensagem = "Ola " + cliente.nome + ", seu pedido foi confirmado. "
+            mensagem += politica.mensagem_confirmacao
+            mensagem += "Total: R$ " + "%.2f" % total + ". Entrega em: " + texto_endereco
+            print("[EMAIL para " + cliente.email + "] " + mensagem)
+
+            self.historico.append(RegistroVenda(cliente.nome, cliente.tipo, total))
+            self.total_vendido += total
+            self.itens.clear()
+            return "OK: " + "%.2f" % total
+        except ErroPedido as erro:
+            return "ERRO: " + str(erro)
 
     def calcular_orcamento(self, tipo_cliente, uf):
         politica = politica_para(tipo_cliente)
