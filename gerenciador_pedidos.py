@@ -1,4 +1,6 @@
-# PASSO 1 - Extract Constant: numeros e textos magicos viram constantes nomeadas.
+# PASSO 2 - Introduce Parameter Object: Cliente e Endereco (SRP).
+from dataclasses import dataclass
+
 LIMITE_DESCONTO_PROMOCIONAL = 500
 LIMITE_FRETE_GRATIS = 300
 META_MENSAL = 10000
@@ -21,6 +23,39 @@ PARCELAS_SEM_JUROS = 3
 JUROS_POR_PARCELA = 0.0199
 
 
+@dataclass
+class Cliente:
+    nome: str
+    email: str
+    tipo: str
+
+    def validar(self):
+        """Retorna mensagem de erro ou None."""
+        if self.nome is None or self.nome.strip() == "":
+            return "ERRO: cliente sem nome"
+        if self.email is None or "@" not in self.email or "." not in self.email:
+            return "ERRO: email invalido"
+        return None
+
+
+@dataclass
+class Endereco:
+    rua: str
+    numero: str
+    cidade: str
+    uf: str
+    cep: str
+
+    def validar(self):
+        if self.cep is None or len(self.cep.replace("-", "")) != 8:
+            return "ERRO: cep invalido"
+        return None
+
+    def formatado(self):
+        return (self.rua + ", " + self.numero + ", " + self.cidade + "/"
+                + self.uf + ", CEP " + self.cep)
+
+
 class GerenciadorPedidos:
 
     def __init__(self):
@@ -38,14 +73,17 @@ class GerenciadorPedidos:
 
     def processar_pedido(self, nome, email, tipo_cliente, pagamento, parcelas,
                          rua, numero, cidade, uf, cep):
-        if nome is None or nome.strip() == "":
-            return "ERRO: cliente sem nome"
-        if email is None or "@" not in email or "." not in email:
-            return "ERRO: email invalido"
+        cliente = Cliente(nome, email, tipo_cliente)
+        endereco = Endereco(rua, numero, cidade, uf, cep)
+
+        erro = cliente.validar()
+        if erro:
+            return erro
         if len(self.itens) == 0:
             return "ERRO: pedido vazio"
-        if cep is None or len(cep.replace("-", "")) != 8:
-            return "ERRO: cep invalido"
+        erro = endereco.validar()
+        if erro:
+            return erro
         for item in self.itens:
             if item[0] not in self.estoque:
                 return "ERRO: produto inexistente " + item[0]
@@ -57,28 +95,29 @@ class GerenciadorPedidos:
             subtotal += int(item[1]) * float(item[2])
 
         desconto = 0
-        if tipo_cliente == "COMUM":
+        if cliente.tipo == "COMUM":
             if subtotal > LIMITE_DESCONTO_PROMOCIONAL:
                 desconto = subtotal * DESCONTO_COMUM
-        elif tipo_cliente == "VIP":
+        elif cliente.tipo == "VIP":
             if subtotal > LIMITE_DESCONTO_PROMOCIONAL:
                 desconto = subtotal * DESCONTO_VIP_ACIMA_DO_LIMITE
             else:
                 desconto = subtotal * DESCONTO_VIP
-        elif tipo_cliente == "FUNCIONARIO":
+        elif cliente.tipo == "FUNCIONARIO":
             desconto = subtotal * DESCONTO_FUNCIONARIO
         else:
             return "ERRO: tipo de cliente desconhecido"
 
         frete = 0
-        if uf == "PE":
+        if endereco.uf == "PE":
             frete = FRETE_PE
-        elif (uf == "PB" or uf == "AL" or uf == "RN" or uf == "BA"
-              or uf == "SE" or uf == "CE" or uf == "PI" or uf == "MA"):
+        elif (endereco.uf == "PB" or endereco.uf == "AL" or endereco.uf == "RN"
+              or endereco.uf == "BA" or endereco.uf == "SE" or endereco.uf == "CE"
+              or endereco.uf == "PI" or endereco.uf == "MA"):
             frete = FRETE_NORDESTE
         else:
             frete = FRETE_DEMAIS_ESTADOS
-        if subtotal - desconto > LIMITE_FRETE_GRATIS or tipo_cliente == "VIP":
+        if subtotal - desconto > LIMITE_FRETE_GRATIS or cliente.tipo == "VIP":
             frete = 0
 
         total = subtotal - desconto + frete
@@ -98,25 +137,25 @@ class GerenciadorPedidos:
         for item in self.itens:
             self.estoque[item[0]] = self.estoque[item[0]] - int(item[1])
 
-        endereco = rua + ", " + numero + ", " + cidade + "/" + uf + ", CEP " + cep
+        texto_endereco = endereco.formatado()
 
         try:
             f = open("pedidos.csv", "a", encoding="utf-8")
-            f.write(nome + ";" + email + ";" + tipo_cliente + ";" + pagamento + ";"
-                    + str(total) + ";" + endereco + "\n")
+            f.write(cliente.nome + ";" + cliente.email + ";" + cliente.tipo + ";"
+                    + pagamento + ";" + str(total) + ";" + texto_endereco + "\n")
             f.close()
         except OSError as e:
             print("Falha ao salvar pedido: " + str(e))
 
-        mensagem = "Ola " + nome + ", seu pedido foi confirmado. "
-        if tipo_cliente == "VIP":
+        mensagem = "Ola " + cliente.nome + ", seu pedido foi confirmado. "
+        if cliente.tipo == "VIP":
             mensagem += "Obrigado por ser VIP! Frete gratis garantido. "
-        elif tipo_cliente == "FUNCIONARIO":
+        elif cliente.tipo == "FUNCIONARIO":
             mensagem += "Desconto de colaborador aplicado. "
-        mensagem += "Total: R$ " + "%.2f" % total + ". Entrega em: " + endereco
-        print("[EMAIL para " + email + "] " + mensagem)
+        mensagem += "Total: R$ " + "%.2f" % total + ". Entrega em: " + texto_endereco
+        print("[EMAIL para " + cliente.email + "] " + mensagem)
 
-        self.historico.append(nome + "|" + tipo_cliente + "|" + str(total))
+        self.historico.append(cliente.nome + "|" + cliente.tipo + "|" + str(total))
         self.total_vendido += total
         self.itens.clear()
         return "OK: " + "%.2f" % total
