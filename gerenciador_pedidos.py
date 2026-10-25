@@ -1,4 +1,4 @@
-# PASSO 10 - Extract Class + injecao de dependencia: repositorio e notificador (DIP/SRP).
+# PASSO 11 - Separate Query from Modifier: consulta pura de estoque baixo (SRP/ISP).
 from dataclasses import dataclass
 
 LIMITE_DESCONTO_PROMOCIONAL = 500
@@ -313,9 +313,13 @@ class GerenciadorPedidos:
             r += "Meta mensal atingida!\n"
         return r
 
+    def produtos_com_estoque_baixo(self):
+        """Consulta pura: sem efeitos colaterais."""
+        return self.estoque.abaixo_do_minimo()
+
     def verificar_estoque(self):
         alerta = ""
-        for produto, quantidade in self.estoque.abaixo_do_minimo():
+        for produto, quantidade in self.produtos_com_estoque_baixo():
             alerta += ("ALERTA: " + produto + " com estoque baixo ("
                        + str(quantidade) + ")\n")
             self._notificador.enviar_email(EMAIL_COMPRAS, "Repor " + produto)
