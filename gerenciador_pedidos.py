@@ -1,4 +1,4 @@
-# PASSO 8 - Replace Error Code with Exception: ErroPedido (SRP).
+# PASSO 9 - Extract Method: processar_pedido dividido em metodos pequenos (SRP).
 from dataclasses import dataclass
 
 LIMITE_DESCONTO_PROMOCIONAL = 500
@@ -222,47 +222,55 @@ class GerenciadorPedidos:
                          rua, numero, cidade, uf, cep):
         cliente = Cliente(nome, email, tipo_cliente)
         endereco = Endereco(rua, numero, cidade, uf, cep)
-
         try:
-            cliente.validar()
-            if len(self.itens) == 0:
-                raise ErroPedido("pedido vazio")
-            endereco.validar()
-            self.estoque.validar(self.itens)
-            if cliente.tipo not in POLITICAS:
-                raise ErroPedido("tipo de cliente desconhecido")
-            politica = POLITICAS[cliente.tipo]
-
-            subtotal, desconto = self._subtotal_e_desconto(politica)
-            frete = calcular_frete(endereco.uf, subtotal - desconto, politica)
-
-            forma = criar_pagamento(pagamento, parcelas)
-            total = forma.aplicar(subtotal - desconto + frete)
-            total = round(total * 100.0) / 100.0
-
-            self.estoque.baixar(self.itens)
-
-            texto_endereco = endereco.formatado()
-
-            try:
-                f = open("pedidos.csv", "a", encoding="utf-8")
-                f.write(cliente.nome + ";" + cliente.email + ";" + cliente.tipo + ";"
-                        + pagamento + ";" + str(total) + ";" + texto_endereco + "\n")
-                f.close()
-            except OSError as e:
-                print("Falha ao salvar pedido: " + str(e))
-
-            mensagem = "Ola " + cliente.nome + ", seu pedido foi confirmado. "
-            mensagem += politica.mensagem_confirmacao
-            mensagem += "Total: R$ " + "%.2f" % total + ". Entrega em: " + texto_endereco
-            print("[EMAIL para " + cliente.email + "] " + mensagem)
-
-            self.historico.append(RegistroVenda(cliente.nome, cliente.tipo, total))
-            self.total_vendido += total
-            self.itens.clear()
-            return "OK: " + "%.2f" % total
+            total = self._fechar_pedido(cliente, pagamento, parcelas, endereco)
         except ErroPedido as erro:
             return "ERRO: " + str(erro)
+        return "OK: " + "%.2f" % total
+
+    def _fechar_pedido(self, cliente, forma_pagamento, parcelas, endereco):
+        cliente.validar()
+        if len(self.itens) == 0:
+            raise ErroPedido("pedido vazio")
+        endereco.validar()
+        self.estoque.validar(self.itens)
+        if cliente.tipo not in POLITICAS:
+            raise ErroPedido("tipo de cliente desconhecido")
+        politica = POLITICAS[cliente.tipo]
+
+        total = self._calcular_total(politica, endereco.uf, forma_pagamento, parcelas)
+
+        self.estoque.baixar(self.itens)
+        texto_endereco = endereco.formatado()
+        self._gravar_pedido(cliente, forma_pagamento, total, texto_endereco)
+        self._notificar_cliente(cliente, politica, total, texto_endereco)
+
+        self.historico.append(RegistroVenda(cliente.nome, cliente.tipo, total))
+        self.total_vendido += total
+        self.itens.clear()
+        return total
+
+    def _calcular_total(self, politica, uf, forma_pagamento, parcelas):
+        subtotal, desconto = self._subtotal_e_desconto(politica)
+        frete = calcular_frete(uf, subtotal - desconto, politica)
+        pagamento = criar_pagamento(forma_pagamento, parcelas)
+        total = pagamento.aplicar(subtotal - desconto + frete)
+        return round(total * 100.0) / 100.0
+
+    def _gravar_pedido(self, cliente, forma_pagamento, total, texto_endereco):
+        try:
+            f = open("pedidos.csv", "a", encoding="utf-8")
+            f.write(cliente.nome + ";" + cliente.email + ";" + cliente.tipo + ";"
+                    + forma_pagamento + ";" + str(total) + ";" + texto_endereco + "\n")
+            f.close()
+        except OSError as e:
+            print("Falha ao salvar pedido: " + str(e))
+
+    def _notificar_cliente(self, cliente, politica, total, texto_endereco):
+        mensagem = "Ola " + cliente.nome + ", seu pedido foi confirmado. "
+        mensagem += politica.mensagem_confirmacao
+        mensagem += "Total: R$ " + "%.2f" % total + ". Entrega em: " + texto_endereco
+        print("[EMAIL para " + cliente.email + "] " + mensagem)
 
     def calcular_orcamento(self, tipo_cliente, uf):
         politica = politica_para(tipo_cliente)
